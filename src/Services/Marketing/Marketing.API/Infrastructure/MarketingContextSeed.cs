@@ -3,6 +3,7 @@
     using Microsoft.eShopOnContainers.Services.Marketing.API.Model;
     using Microsoft.Extensions.Logging;
     using Polly;
+    using Polly.Retry;
     using System;
     using System.Collections.Generic;
     using System.Data.SqlClient;
@@ -19,7 +20,7 @@
             {
                 if (!context.Campaigns.Any())
                 {
-                    context.Campaigns.AddRange(
+                    await context.Campaigns.AddRangeAsync(
                         GetPreconfiguredMarketings());
 
                     await context.SaveChangesAsync();
@@ -68,7 +69,7 @@
             };
         }
      
-        private Policy CreatePolicy(int retries, ILogger<MarketingContextSeed> logger, string prefix)
+        private AsyncRetryPolicy CreatePolicy(int retries, ILogger<MarketingContextSeed> logger, string prefix)
         {
             return Policy.Handle<SqlException>().
                 WaitAndRetryAsync(
@@ -76,7 +77,7 @@
                     sleepDurationProvider: retry => TimeSpan.FromSeconds(5),
                     onRetry: (exception, timeSpan, retry, ctx) =>
                     {
-                        logger.LogTrace($"[{prefix}] Exception {exception.GetType().Name} with message ${exception.Message} detected on attempt {retry} of {retries}");
+                        logger.LogWarning(exception, "[{prefix}] Exception {ExceptionType} with message {Message} detected on attempt {retry} of {retries}", prefix, exception.GetType().Name, exception.Message, retry, retries);
                     }
                 );
         }

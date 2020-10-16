@@ -1,5 +1,11 @@
 ﻿using MediatR;
+using Microsoft.eShopOnContainers.BuildingBlocks.EventBus.Extensions;
 using Microsoft.eShopOnContainers.Services.Ordering.Infrastructure.Idempotency;
+using Microsoft.Extensions.Logging;
+using Ordering.API.Application.Behaviors;
+using Ordering.API.Application.Commands;
+using System;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Microsoft.eShopOnContainers.Services.Ordering.API.Application.Commands
@@ -10,16 +16,21 @@ namespace Microsoft.eShopOnContainers.Services.Ordering.API.Application.Commands
     /// </summary>
     /// <typeparam name="T">Type of the command handler that performs the operation if request is not duplicated</typeparam>
     /// <typeparam name="R">Return value of the inner command handler</typeparam>
-    public class IdentifiedCommandHandler<T, R> : IAsyncRequestHandler<IdentifiedCommand<T, R>, R>
+    public class IdentifiedCommandHandler<T, R> : IRequestHandler<IdentifiedCommand<T, R>, R>
         where T : IRequest<R>
     {
         private readonly IMediator _mediator;
         private readonly IRequestManager _requestManager;
+        private readonly ILogger<IdentifiedCommandHandler<T, R>> _logger;
 
-        public IdentifiedCommandHandler(IMediator mediator, IRequestManager requestManager)
+        public IdentifiedCommandHandler(
+            IMediator mediator,
+            IRequestManager requestManager,
+            ILogger<IdentifiedCommandHandler<T, R>> logger)
         {
             _mediator = mediator;
             _requestManager = requestManager;
+            _logger = logger ?? throw new System.ArgumentNullException(nameof(logger));
         }
 
         /// <summary>
@@ -37,7 +48,7 @@ namespace Microsoft.eShopOnContainers.Services.Ordering.API.Application.Commands
         /// </summary>
         /// <param name="message">IdentifiedCommand which contains both original command & request ID</param>
         /// <returns>Return value of inner command or default value if request same ID was found</returns>
-        public async Task<R> Handle(IdentifiedCommand<T, R> message)
+        public async Task<R> Handle(IdentifiedCommand<T, R> message, CancellationToken cancellationToken)
         {
             var alreadyExists = await _requestManager.ExistAsync(message.Id);
             if (alreadyExists)
@@ -47,14 +58,61 @@ namespace Microsoft.eShopOnContainers.Services.Ordering.API.Application.Commands
             else
             {
                 await _requestManager.CreateRequestForCommandAsync<T>(message.Id);
+                try
+                {
+                    var command = message.Command;
+                    var commandName = command.GetGenericTypeName();
+                    var idProperty = string.Empty;
+                    var commandId = string.Empty;
 
-                // Send the embeded business command to mediator so it runs its related CommandHandler 
-                var result = await _mediator.Send(message.Command);
-                
-                return result;
+                    switch (command)
+                    {
+                        case CreateOrderCommand createOrderCommand:
+                            idProperty = nameof(createOrderCommand.UserId);
+                            commandId = createOrderCommand.UserId;
+                            break;
+
+                        case CancelOrderCommand cancelOrderCommand:
+                            idProperty = nameof(cancelOrderCommand.OrderNumber);
+                            commandId = $"{cancelOrderCommand.OrderNumber}";
+                            break;
+
+                        case ShipOrderCommand shipOrderCommand:
+                            idProperty = nameof(shipOrderCommand.OrderNumber);
+                            commandId = $"{shipOrderCommand.OrderNumber}";
+                            break;
+
+                        default:
+                            idProperty = "Id?";
+                            commandId = "n/a";
+                            break;
+                    }
+
+                    _logger.LogInformation(
+                        "----- Sending command: {CommandName} - {IdProperty}: {CommandId} ({@Command})",
+                        commandName,
+                        idProperty,
+                        commandId,
+                        command);
+
+                    // Send the embeded business command to mediator so it runs its related CommandHandler 
+                    var result = await _mediator.Send(command, cancellationToken);
+
+                    _logger.LogInformation(
+                        "----- Command result: {@Result} - {CommandName} - {IdProperty}: {CommandId} ({@Command})",
+                        result,
+                        commandName,
+                        idProperty,
+                        commandId,
+                        command);
+
+                    return result;
+                }
+                catch
+                {
+                    return default(R);
+                }
             }
         }
     }
-
-
 }

@@ -2,15 +2,14 @@
 using Microsoft.eShopOnContainers.Services.Ordering.API.Application.Commands;
 using Microsoft.eShopOnContainers.Services.Ordering.Domain.AggregatesModel.OrderAggregate;
 using Microsoft.eShopOnContainers.Services.Ordering.Infrastructure.Idempotency;
-using System;
-using System.Collections.Generic;
-using System.Linq;
+using Microsoft.Extensions.Logging;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Ordering.API.Application.Commands
 {
     // Regular CommandHandler
-    public class CancelOrderCommandHandler : IAsyncRequestHandler<CancelOrderCommand, bool>
+    public class CancelOrderCommandHandler : IRequestHandler<CancelOrderCommand, bool>
     {
         private readonly IOrderRepository _orderRepository;
 
@@ -25,7 +24,7 @@ namespace Ordering.API.Application.Commands
         /// </summary>
         /// <param name="command"></param>
         /// <returns></returns>
-        public async Task<bool> Handle(CancelOrderCommand command)
+        public async Task<bool> Handle(CancelOrderCommand command, CancellationToken cancellationToken)
         {
             var orderToUpdate = await _orderRepository.GetAsync(command.OrderNumber);
             if(orderToUpdate == null)
@@ -34,7 +33,7 @@ namespace Ordering.API.Application.Commands
             }
 
             orderToUpdate.SetCancelledStatus();
-            return await _orderRepository.UnitOfWork.SaveEntitiesAsync();
+            return await _orderRepository.UnitOfWork.SaveEntitiesAsync(cancellationToken);
         }
     }
 
@@ -42,7 +41,11 @@ namespace Ordering.API.Application.Commands
     // Use for Idempotency in Command process
     public class CancelOrderIdentifiedCommandHandler : IdentifiedCommandHandler<CancelOrderCommand, bool>
     {
-        public CancelOrderIdentifiedCommandHandler(IMediator mediator, IRequestManager requestManager) : base(mediator, requestManager)
+        public CancelOrderIdentifiedCommandHandler(
+            IMediator mediator,
+            IRequestManager requestManager,
+            ILogger<IdentifiedCommandHandler<CancelOrderCommand, bool>> logger)
+            : base(mediator, requestManager, logger)
         {
         }
 
